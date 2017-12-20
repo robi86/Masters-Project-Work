@@ -1,0 +1,2 @@
+The files in this folder contain code visualziations and a report from my Bayesian Methods. This course explored foundations of Bayesian data analysis and application of Markov Chain Monte Carlo processes for parameter estimation, prediction, and model comparison with R packages of JAGS and Stan. My term-project compared performance of Bayesian and Lasso Regularized Logistic Regression, and Random Forest for predicting diabetes hospital readmissions using data from UCI Machine Learning repository
+
