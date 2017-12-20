@@ -1,1 +1,1 @@
-Visualizations
+Exploratory Data Analysis Visualizations
