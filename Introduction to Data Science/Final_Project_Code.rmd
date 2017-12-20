@@ -11,7 +11,7 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-George Washington University DATS 6101 - Final Project: Logistic Regression for Modeling Crashes in Philadelphia by Erik Bethke, David Robison, Nathan Zencey
+George Washington University DATS 6101 - Final Project: Logistic Regression for Modeling Crashes in Philadelphia by David Robison
 
 ### Research Question: In the City of Philadelphia between 2011 - 2014, based on potential risk factors recorded at the time of an automobile accident, what is the probability that an occupant of a vehicle was not wearing a seatbelt?
 
