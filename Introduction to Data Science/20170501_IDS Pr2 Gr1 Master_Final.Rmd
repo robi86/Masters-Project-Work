@@ -1,7 +1,7 @@
-<<<<<<< Updated upstream
+
 ---
 title: "Predicting Seatbelt Use in Philadelphia Automobile Crashes"
-author: "Erik Bethke, David Robison, Nathan Zencey"
+author: "David Robison"
 date: "April 24, 2017"
 output:
   html_document: default
