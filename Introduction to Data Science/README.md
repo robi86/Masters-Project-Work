@@ -1,0 +1,2 @@
+The files in this folder contain code visualziations and a report from my Introduction to Data Science Course. This term-project 
+analyzed roadway data collected by the City of Philadelphia to predict probabilities of seatbelt use by vehicle occupants involved in accidents, creating risk profiles by age, gender, and time of day. 
