@@ -1,0 +1,1161 @@
+<<<<<<< Updated upstream
+---
+title: "Predicting Seatbelt Use in Philadelphia Automobile Crashes"
+author: "Erik Bethke, David Robison, Nathan Zencey"
+date: "April 24, 2017"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+George Washington University DATS 6101 - Final Project: Logistic Regression for Modeling Crashes in Philadelphia by Erik Bethke, David Robison, Nathan Zencey
+
+### Research Question: In the City of Philadelphia between 2011 - 2014, based on potential risk factors recorded at the time of an automobile accident, what is the probability that an occupant of a vehicle was not wearing a seatbelt?
+
+As a final project for DATS 6101: Introduction to Data Science, our group chose to further investigate seatbelt use among automobile occupants involved in car accidents in the City of Philadelphia between 2011 - 2015. This analysis is a follow-on to our initial work conducted in February 2017. In that analysis, using the same dataset, we sought to answer whether seatbelt use varied by age and gender of the drivers and passengers involved in an accident.
+
+After considerable data cleaning, we performed Pearson's chi-square tests on our Age Group and Sex variables. In each test, the resulting p-value was highly significant providing enough evidence to reject the null hypothesis that seatbelt use is not independent of age or sex of the occupant. To extend this work, we now will try to identify  additional risk factors for not wearing a seatbelt. From the identified variables, we will then try to fit a model that can accurately predict the binomial outcome of whether or not an occupant involved in the accident was wearing their seatbelt. 
+
+The datasets and metadata for this and the prior analysis can be found at: http://metadata.phila.gov/#home/datasetdetails/5543865420583086178c4eba/. For this analysis, we use three datafiles: the Collision Data - Persons Table, Collision Data - Crash Shapefile, and the Roadway Table. The Collisions Data - Persons Table was used to verify that seatbelt use varies by Age and Sex. 
+
+The Collisions Data - Crash Shapefile and Roadway Table are the new datasets that will be used to extend the number of variables in our data. These datasets are merged using an inner join on the Crash Reference Number (CRN), which provides a unique identifier for each crash record across the separate data files. 
+
+The analysis begins in Section 2 and provides some of the exploratory data analysis (EDA) and findings from the first project. In Section 3 & 4, the new data files are merged with the final dataframe from the mid-term and an EDA of the new variables is conducted before model fitting in Section 6 & 7. 
+
+### 1. Installing & Loading Modules/Packages
+
+This section installs the necessary graphing and statistical packages. 
+
+```{r, echo = TRUE}
+# plyr: tables, revaluing
+if (!is.element("plyr", installed.packages()[,1]))
+    install.packages("plyr", dependencies = TRUE)
+  require("plyr", character.only = TRUE)
+
+# dplyr: tables, revaluing
+if (!is.element("dplyr", installed.packages()[,1]))
+    install.packages("dplyr", dependencies = TRUE)
+  require("dplyr", character.only = TRUE)
+
+# car: companion to applied regression
+if (!is.element("car", installed.packages()[,1]))
+    install.packages("car", dependencies = TRUE)
+  require("car", character.only = TRUE)
+
+# ggplot2: visuals
+if (!is.element("ggplot2", installed.packages()[,1]))
+    install.packages("ggplot2", dependencies = TRUE)
+  require("ggplot2", character.only = TRUE)
+
+# ROCR: visuals for classifier performance
+if (!is.element("ROCR", installed.packages()[,1]))
+    install.packages("ROCR", dependencies = TRUE)
+  require("ROCR", character.only = TRUE)
+
+# pRoc: visualizing ROC curves
+if (!is.element("pROC", installed.packages()[,1]))
+    install.packages("pROC", dependencies = TRUE)
+  require("pROC", character.only = TRUE)
+
+# bestglm: best subset glm using information criteria or cross-validation
+if (!is.element("bestglm", installed.packages()[,1]))
+    install.packages("bestglm", dependencies = TRUE)
+  require("bestglm", character.only = TRUE)
+
+# pscl: Political Science Computational Laboratory, Stanford University
+if (!is.element("pscl", installed.packages()[,1]))
+    install.packages("pscl", dependencies = TRUE)
+  require("pscl", character.only = TRUE)
+
+# rgl: 3D Visualization Using OpenGL
+if (!is.element("rgl", installed.packages()[,1]))
+    install.packages("rgl", dependencies = TRUE)
+  require("rgl", character.only = TRUE)
+
+# visreg
+if (!is.element("visreg", installed.packages()[,1]))
+    install.packages("visreg", dependencies = TRUE)
+  require("visreg", character.only = TRUE)
+
+if (!is.element("forcats", installed.packages()[,1]))
+    install.packages("forcats", dependencies = TRUE)
+  require("forcats", character.only = TRUE)
+```
+
+### 2. Loading & Cleaning Midterm Data Set
+The code below is from the analysis conducted for the mid-term project. This section is meant to be a refresher. It includes the EDA of the Age variable from the  Collision Data - Persons Table followed by the steps taken to cleanse the data, graphical representations of seatbelt use by age, and results of the chi-square test. It is important to note that driver and passenger seatbelt use is contained in the Collisions Data - Persons Table.
+
+```{r}
+# Philadelphia Persons Crash dataset, loaded from Philadelphia Metadata Catalog.
+persons <- read.csv(url("http://data.phl.opendata.arcgis.com/datasets/5ba1194f422e488e8549f8d96b788033_1.csv"))
+str(persons)
+
+# Begin cleaning of Persons dataset, resulting in crashes data frame
+persons_clean <- subset(persons, PERSON_TYPE == 1 | PERSON_TYPE == 2) # select either driver or passenger
+persons_clean <- subset(persons_clean, AGE != 99 & AGE != 98) #or, AGE < 98
+persons_clean <- subset(persons_clean, !(AGE == 1 & PERSON_TYPE == 1)) # remove age 1 drivers
+persons_clean$restraint_used <- mapvalues(persons_clean$RESTRAINT_HELMET, from = c("0", "1", "2", "3", "4", "5", "6", "10", "11", "12", "90", "99"), to = c("None Used/NA", "Shoulder Belt", "Lap Belt", "Lap and shoulder belt", "Child safety seat", "Motorcycle helmet", "Bicycle helmet", "Improperly used safety belt", "Improperly used child safety seat", "Improperly used helmet", "Restraint used, unknown type", "Unknown"))
+
+#PERSON_TYPE: 1 - Driver, 2 - Passenger, 7 - Pedestrian, 8 - Other, 9 - Unknown
+
+persons_clean$Involvement <- mapvalues(persons_clean$PERSON_TYPE, from = c("1", "2", "7", "8", "9"), to = c("Driver", "Passenger", "Pedestrian", "Other", "Unknown"))
+
+dropageU <- subset(persons_clean, SEX=="M" | SEX=="F", drop = TRUE) # 7 blank sex entries too..
+
+crashes <- subset(dropageU, (RESTRAINT_HELMET != 5 & RESTRAINT_HELMET != 6 & RESTRAINT_HELMET != 12 & RESTRAINT_HELMET != 99)) 
+
+crashes$seatbelt <- recode(crashes$restraint_used, 'c("Child safety seat", "Lap Belt", "Lap and shoulder belt", "Restraint used, unknown type", "Shoulder Belt") = "Yes"; c("Improperly used child safety seat", "Improperly used safety belt", "None Used/NA") = "No" ')
+
+crashes$SEX <- droplevels(crashes$SEX)
+
+# INITIAL EXPLORATORY DATA ANALYSIS FROM MIDTERM 
+boxplot(x = crashes$AGE, main = "Ages Boxplot - Philadelphia Crash Data", 
+        horizontal = TRUE)
+
+crashes$AgeGroup <- cut(crashes$AGE, c(0,15,20,26,32,50,75,99), 
+                        labels = c("Youth", "Teenager", "Early Twenties", 
+                                   "Late Twenties/Early Thirties", "Early Middle Age",
+                                   "Middle Age", "Senior"))
+age_chi = table(crashes$AgeGroup, crashes$seatbelt)
+age_chi
+chisq.test(age_chi)
+#Create a dataframe of percent frequency of our seatbelt use categories for each age group
+ageBeltFreq <- crashes %>%
+  group_by (AgeGroup, seatbelt) %>%
+  summarise (n=n()) %>%
+  mutate(Freq = (n / sum(n)) * 100)
+
+ageBeltFreq_df <- as.data.frame(ageBeltFreq)
+
+#Plot the seatbelt use percent frequency and age group relationship in two different wys
+
+ggplot(crashes, aes(AgeGroup, fill=seatbelt) ) +
+  geom_bar(position="dodge") + 
+  ggtitle("Seatbelt Use by Age Group") +
+  theme(plot.title = element_text(size=12, hjust=0.5), legend.position = "top",
+        legend.title = element_blank(), axis.title.x = element_blank(), 
+        axis.text.x = element_text(angle = 45, hjust = 1))+ylab("Count")
+
+ggplot(ageBeltFreq_df, 
+       aes(x = ageBeltFreq_df$AgeGroup, y = ageBeltFreq_df$Freq, 
+           label =  round(Freq,2)))+geom_count(aes(ageBeltFreq_df$AgeGroup,
+                                                   ageBeltFreq_df$Freq, 
+                                                   fill = seatbelt, colour = seatbelt),
+                                               size = 7) +
+  theme(plot.title = element_text(hjust = 0.5),legend.position = "top", 
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylab("Percent Frequency") + 
+  theme(axis.title.x = element_blank(), 
+        legend.title = element_blank()) + 
+  ggtitle("Seatbelt Use by Age Group (% Frequency)")+geom_text(size= 3)
+```
+
+### 3. Read in new datsets
+
+To begin the follow-on analysis, we'll read in two new dataframes from the City of Philadelphia. The first is a Crash File that has variables related to the crash itself such as time of day, weather, etc. The second new data source is the Roadway Table that provides descriptions about the road where the crash happened. For example, the speed limit and the number of lanes.  
+
+```{r}
+#Create the crash data frame, loaded from Philadelphia Metadata Catalog.
+crashDf <- read.csv(url("http://data.phl.opendata.arcgis.com/datasets/5ba1194f422e488e8549f8d96b788033_0.csv"))
+
+
+#Subset the crash dataframe for the potential predictor variables that we are interested in
+crashDf <- subset(crashDf, select = c("CRN", 'HOUR_OF_DAY', "DAY_OF_WEEK",
+'TIME_OF_DAY',
+'CRASH_MONTH',
+'WEATHER',
+"ROAD_CONDITION",
+"LATITUDE", 
+"LONGITUDE"
+))
+
+#Create the roadway data frame, loaded from Philadelphia Metadata Catalog.
+roadwayDf <- read.csv(url("http://data.phl.opendata.arcgis.com/datasets/5ba1194f422e488e8549f8d96b788033_3.csv"))
+
+#subset the roadway dataframe
+roadwayDf <- subset(roadwayDf, select = c("CRN", "LANE_COUNT", "SPEED_LIMIT"))
+roadwayDf <- subset(roadwayDf, !duplicated(CRN))
+
+```
+
+
+### 4. Merge Two New Data Sources (RoadwayDf, CrashesDf) with the Final Dataframe from the Midterm Proect (Crashes)
+
+With the two new data files stored as dataframes and the desired columns selected, we next combine them with the final dataframe from the mid-term - 'crashes' - using an inner join on the Crash Reference Number (CRN) column. Again, it is important to recall that driver and passenger seatbelt use is contained in the 'crashes' dataframe. Therefore, by using an inner join on the CRN, we create a dataframe that in addition to seatbelt use has new variables that are unique to either a driver or passenger involved in an accident. This new dataframe 'persons_crashes_roadway_innerjoin' will serve as the primary data set for the remainder of the analysis. 
+
+```{r}
+# First merge our 'Crashes' dataframe i.e. cleaned persons dataframes with the raw crash shapefile 
+person_crashes_innerjoin <- inner_join(crashes, crashDf, by = c("CRN" = "CRN"))
+person_crashes_roadway_innerjoin <- inner_join(person_crashes_innerjoin, roadwayDf, by = c("CRN" = "CRN"))
+
+#Save both dataframes as a CSV file
+write.csv( person_crashes_roadway_innerjoin, file = "person_crashes_roadway_innerjoin.csv")
+str(person_crashes_roadway_innerjoin)
+```
+
+
+### 5. EDA of Newly Added Variables Merged into Crashes_Persons_Roadway_InnnerJoin Data Frame, including Lane Count, Speed Limit, Hour of Day, Day of Week
+
+The new primary dataframe is called crashes_persons_roadway_innerjoin. For our explanatory data analysis, we'll copy this into a new data frame called newEDADf. After the EDA, we'll come back and modify the person_crashes_roadway_innerjoin based upon our observations. Overall, we are trying to identify variables that are coded as unknown or do not make sense. These 'noisy' observations will need to be removed before we begin model fitting. 
+
+```{r}
+newEDADf <- person_crashes_roadway_innerjoin
+
+str(newEDADf)
+```
+
+We've added variables for the Lane Count, Speed Limit, Hour of Day, Day of Week, Crash Month, Weather, and Road Condition. 
+Let's use histograms and the table function to look at the distribution of the new variables and see if we can identify variables coded as unknown.  
+```{r}
+par(mfrow = c(2,2))
+
+hist(newEDADf$LANE_COUNT, breaks = 100, xlim = c(0,8), main = "Lane Count", xlab = NULL) #Note we are excluding lane counts above 8
+
+hist(newEDADf$SPEED_LIMIT, main = "Speed Limit", xlab =  NULL)
+
+hist(newEDADf$HOUR_OF_DAY, breaks = 24, xlim = c(0,25), main = "Hour of Day", xlab = NULL)
+
+hist(newEDADf$DAY_OF_WEEK, breaks = 14, main = "Day of Week", xlab = NULL)
+print("Lane Count")
+table(newEDADf$LANE_COUNT)
+print("Speed Limit")
+table(newEDADf$SPEED_LIMIT)
+print("Hour of Day")
+table(newEDADf$HOUR_OF_DAY)
+print("Day of the Week")
+table(newEDADf$DAY_OF_WEEK)
+```
+
+We observe that most of our data is from crashes on road with 2 LANES OR LESS and a speed limit BELOW 35 MPH. In addition, crashes by hour of day shows a normal distribution centered around ~3:00 PM with an equal distribution across the days of the week. 
+
+Looking at the tables we see that lane goes from 1-99, so we need to drop some of these variables. In Hour of Day, we need to drop 99. 
+
+Let's continue to use histograms and tables to look at the distribution of Road Condition & Weather
+```{r}
+par(mfrow = c(2,1))
+
+hist((newEDADf$ROAD_CONDITION), breaks = 8, main =  "Road Condition", xlab = NULL)
+hist(newEDADf$WEATHER, breaks = 8, main = "Weather", xlab = NULL)
+
+table(newEDADf$WEATHER)  
+
+table(newEDADf$ROAD_CONDITION) 
+```
+
+From the table, we see that weather is coded using 10 categories, including a -1. These will later need to be combined into larger categories. Most of the dataset is coded with a 1 under the weather variable, signifying Clear weather. From the Road_Condition table, we see 9 different road conditions. The descriptions are similar to weather condition and might have some collinearity. For our model we'll likely exclude one of these. 
+
+Next, we'll take a look at Hour of Day and Seatbelt Use in the entire dataset with a table. A table object can be passed to the plot function to help visualize the relationship of the two variables. 
+```{r}
+hours_table <- table(newEDADf$HOUR_OF_DAY,
+                     newEDADf$seatbelt)
+plot(hours_table)
+```
+To the naked eye, it looks like evening and early morning hours starting around 7:00 PM (17) and until 3:00 AM (3) have higher proportions of seatbelts not worn. 
+
+We'll also plot a table of Weather and Seatbelt Use.
+```{r}
+weather_table <- table(newEDADf$WEATHER,
+                       newEDADf$seatbelt)
+plot(weather_table)
+```
+This plot is less conclusive. To the naked eye, there does not appear be be a visible difference in seatbelt use by Weather. 
+
+We've gotten a sense of some of our distributions as well as clues as to divisions in seatbelt usage within weather and hour of day variables. We'll dig into these divisions further. 
+```{r}
+#Update Lane Count to Drop anything above 6 and then plot combined table
+newEDADf <- subset(newEDADf, LANE_COUNT == 1 | LANE_COUNT == 2 | LANE_COUNT == 3 |  LANE_COUNT == 4 | LANE_COUNT == 5 | LANE_COUNT == 6, drop = TRUE)
+lane_count_table <- table(newEDADf$LANE_COUNT, newEDADf$seatbelt)
+plot(lane_count_table) 
+
+#Let's look at seatbelt use and Road Speed via new speed category variable, then plot table
+newEDADf$Speed_Category <-  cut(newEDADf$SPEED_LIMIT, c(0,35,65), labels = c("Low Speed", "High Speed"))
+lane_count_speed <-table(newEDADf$Speed_Category, newEDADf$seatbelt)
+plot(lane_count_speed) 
+
+#LOOK AT WEATHER AND SEATBELT USE, FIRST REGROUP WEATHER AS FACTOR AND CREATE NEW LEVELS
+newEDADf$WEATHER <- factor(newEDADf$WEATHER, labels = c('Unknown -1', 'Clear', 'Rain', 'Sleet', 'Snow', 'Fog', 'Rain and fog', 'Sleet and fog', 'Other', 'Unknown'))
+levels(newEDADf$WEATHER) <- list(Other = c("Unknown -1", "Unknown", "Other"),  Clear = "Clear", 
+                                 Rain_Fog = c("Rain", "Rain and fog", "Fog"),  
+                                 Snow =  c("Sleet", "Snow", "Sleet and fog"))
+weather_belt <- table(newEDADf$WEATHER, newEDADf$seatbelt) 
+plot(weather_belt)
+
+involvement_belt <- table(newEDADf$Involvement, newEDADf$seatbelt)
+plot(involvement_belt) 
+invovlement_lane_seatbelt <- table(newEDADf$Involvement, newEDADf$LANE_COUNT, newEDADf$seatbelt)
+plot(invovlement_lane_seatbelt) 
+```
+
+In the lane_count_table, it looks like seatbelts are worn less often on roads with a lane_count of 1 or 2. In lane_count_speed, it appears that seatbelts are worn less often in our 'Low Speed' category', which we defined as roads 35 MPH or less. In Weather_belt, there does not seem be to any consistent associations with weather and Seatbelt Use after we redruced the number of categories to Clear, Rain_Fog, Snow, and Other. In Involvement_Belt, we see we have more drivers in our dataset, but a significant portion of passengers were also not wearing seatbelts. Finally, Involvement_lane_seatbelt, shows that passenger and driver behavior are similar in that most do not wear seat belts in roadways with a lane count of 1 or 2. 
+
+Let's look further at behavior for Male/Female and Driver/Passenger Behavior by HOUR_OF_DAY
+```{r}
+library(gridExtra)
+newEDADf <- subset(newEDADf, HOUR_OF_DAY < 99, drop = TRUE) #Drop Hour of Day that is Unknown and coded as 99. 
+
+graph4 <- ggplot(newEDADf,
+                 aes(x=newEDADf$HOUR_OF_DAY,
+                              fill=newEDADf$seatbelt)) + geom_bar(position="stack")+facet_grid(~newEDADf$SEX)+theme(legend.position="none", axis.title.x = element_blank(), plot.title = element_text(hjust = 0.5))+ggtitle("Occupant Behavior by Time of Day")
+                                                                                                              
+graph2 <- ggplot(newEDADf,
+                   aes(x=newEDADf$HOUR_OF_DAY,
+                              fill=newEDADf$seatbelt)) + geom_bar(position="stack")+facet_grid(~newEDADf$Involvement)+xlab("Hour of Day")+theme(legend.position="bottom")+labs(fill = "Seatbelt Use")
+
+grid.arrange(graph4, graph2, ncol = 1)
+```
+
+From these plots it appears that the behavior of Males and Females across the Hours of the Day is similar with regards to wearing a seatbelt. The Driver versus Passenger plot does not present any clear conclusions.
+
+We'll now look at behavior for Male/Female and Driver/Passenger by Lane Count. 
+```{r}
+graph3 <- ggplot(newEDADf,aes(x=newEDADf$LANE_COUNT,
+                              fill=newEDADf$seatbelt)) + geom_bar(position="stack")+facet_grid(~newEDADf$SEX)+theme(legend.position="none",
+                                                                                                                    axis.title.x = element_blank(), plot.title = element_text(hjust = 0.5))+ggtitle("Occupant Behavior by Lane Count")
+
+graph1 <- ggplot(newEDADf,aes(x=newEDADf$LANE_COUNT,
+                              fill=newEDADf$seatbelt)) + geom_bar(position="stack")+facet_grid(~newEDADf$Involvement)+xlab("Lane Count")+theme(legend.position="bottom")+labs(fill = "Seatbelt Use")
+
+grid.arrange( graph3, graph1, ncol=1)
+```
+
+For Lane_Count, we see a similar behavior between Males and Females and Drivers Passengers in that seatbelts are most often not worn crashes occurs on roads with a Lane_Count of 2 or less. 
+
+Next, we'll look occupants behavior by Age Group and Hour of Day. 
+```{r}
+ggplot(newEDADf,aes(x=newEDADf$HOUR_OF_DAY,
+                              fill=newEDADf$seatbelt)) + geom_bar(position="stack")+facet_grid(~newEDADf$AgeGroup)+theme(legend.position = 'bottom', plot.title = element_text(hjust = 0.5)
+                                                                                                            )+xlab(label = "Hour of the Day")+labs(fill = "Seatbelt Use")+ggtitle("Behavior by Age Group and Hour of Day")
+```
+
+We see our data set has more "Early Middle Age" than any other age group, and crashes peaks around 3:00 PM - 6:00 PM. Across all age groups, the number of accidents seems to show a similar pattern. However, by eye it is difficult to distinguish which hours of the day have greatest lack of seatbelt use. 
+Let's make one more set of visualizations using a mosaic plot. Visually, these are a bit clunky, but they are extremely informative. Mosaic plots include standardized residuals. The standardized residual is a ratio of the difference between observed and expected counts with a Null Hypothesis that the variables are independent. In our case, the Null hypothesis is that the frequency of seatbelt use is independent of the Hour of Day. If the standardized residual is less than -2, the cells observed frequency is less than the expected frequency. If greater than 2, the observed frequency is greater than the expected frequency.
+```{r}
+mosaicplot(table(newEDADf$Involvement, newEDADf$seatbelt, newEDADf$HOUR_OF_DAY),main = "Occupant Involvement vs. Hour of Day", shade = TRUE)
+
+mosaicplot(table(newEDADf$SEX, newEDADf$seatbelt, newEDADf$HOUR_OF_DAY), main = "Occupant Sex vs. Hour of Day",shade = TRUE)
+```
+
+These plots show us a lot of information. Let's take a moment to review them closely. For Occupant Sex vs. Hour of Day, we see that for females the hours of 0 - 3 have a standardized residual of < -2 for Seatbelt Use = Yes. This tells us that observed frequency of seatbelt use here is less than the expected frequency. For Males, we see that the hours of 7:00 - 5:00 AM have a standardized residual of greater than 2 for Seatbelt Use = No i.e. the observed frequency is greater than the expected frequency. This tells us that we can reject the null hypothesis and be confident that for Male occupants seatbelt use is less during nighttime and early morning hours.  
+
+In the Occupant Involvement vs Hour of the Day, both the plots for drivers and passengers seem to indicate a somewhat similar pattern. The driver plot shows standardized residuals less than -2 in the Yes category for several nighttime and early morning hours. In the passenger plot, we see a number of standardized residuals greater than 2 for the No Category.
+
+These plots are useful as they allow us to infer that we can collapse this variable from 24 hours into a two level categorical variable such as night and day. We have now completed our Exploratory Data Analysis are ready to begin processing our data and preparing it for model building. 
+
+### 6. Processing Dataframe for Model Building
+
+First, we'll convert all of the variables that we need to be factors and set labels and levels. In some cases, we'll drop levels that are coded as unknown e.g., Hour of Day = 99 or would add noise e.g., roads with a Lane Count greater than 6. 
+```{r}
+#Set variables to factors and add level labels: 
+person_crashes_roadway_innerjoin$CRASH_MONTH <- factor(person_crashes_roadway_innerjoin$CRASH_MONTH, labels = c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"))
+
+person_crashes_roadway_innerjoin$DAY_OF_WEEK <- factor(person_crashes_roadway_innerjoin$DAY_OF_WEEK, labels =  c("Monday", "Tuesday", "Wednesday",  "Thursday", "Friday", "Saturday", "Sunday"))
+
+person_crashes_roadway_innerjoin$ROAD_CONDITION <- factor(person_crashes_roadway_innerjoin$ROAD_CONDITION, labels = c('Dry',  'Wet', 'Sand, mud, dirty, gravel', 'Snow', 'Slush', 'Ice', 'Ice Patches',  'Water','Other', 'Unknown'))
+levels(person_crashes_roadway_innerjoin$ROAD_CONDITION) <- list(Dry = "Dry", Winter = c("Snow", "Ice Patches", "Slush", "Ice"), Other = "Other", Wet = c("Water", "Wet"), Unpaved = "Sand, mud, dirty, gravel", Unknown = "Unknown") #Group into four categories
+
+person_crashes_roadway_innerjoin$WEATHER <- factor(person_crashes_roadway_innerjoin$WEATHER, labels = c('Unknown -1', 'Clear', 'Rain', 'Sleet', 'Snow', 'Fog', 'Rain and fog', 'Sleet and fog', 'Other', 'Unknown'))
+levels(person_crashes_roadway_innerjoin$WEATHER) <- list(Unknown = c("Unknown -1", "Unknown"),  Clear = "Clear", Rain = c("Rain", "Rain and fog"), Fog = "Fog",  Snow =  c("Sleet", "Snow", "Sleet and fog"), Other = "Other")
+person_crashes_roadway_innerjoin <- subset(person_crashes_roadway_innerjoin, person_crashes_roadway_innerjoin$WEATHER == "Clear" | person_crashes_roadway_innerjoin$WEATHER == "Rain" | person_crashes_roadway_innerjoin$WEATHER == "Fog" | person_crashes_roadway_innerjoin$WEATHER == "Snow", drop = TRUE)
+person_crashes_roadway_innerjoin$WEATHER <- droplevels(person_crashes_roadway_innerjoin$WEATHER) #Keep only Weather of Clear, snow, Rain, and Fog
+
+person_crashes_roadway_innerjoin <- subset(person_crashes_roadway_innerjoin, person_crashes_roadway_innerjoin$HOUR_OF_DAY < 99) #Remove unknown Hour of Day
+person_crashes_roadway_innerjoin$HOUR_OF_DAY <- factor(person_crashes_roadway_innerjoin$HOUR_OF_DAY)
+
+person_crashes_roadway_innerjoin <- subset(person_crashes_roadway_innerjoin, LANE_COUNT == 1 | LANE_COUNT == 2 | LANE_COUNT == 3 |  LANE_COUNT == 4 | LANE_COUNT == 5 | LANE_COUNT == 6, drop = TRUE) #Drop lane counts greater than 6
+
+person_crashes_roadway_innerjoin <- subset(person_crashes_roadway_innerjoin, SPEED_LIMIT < 65, drop = TRUE) #There are only 6 observations with speed limit of 65. For model fitting we cannot have a train data set with 65 and a test set withourt 65. Therefore, we drop anything greater than 65. 
+
+str(person_crashes_roadway_innerjoin)
+```
+
+We can confirm that Weather, Hour of Day, Speed Limit and Lane Count are as we desire them and have  dropped levels.
+```{r}
+table(person_crashes_roadway_innerjoin$WEATHER)
+
+table(person_crashes_roadway_innerjoin$HOUR_OF_DAY)
+
+table(person_crashes_roadway_innerjoin$LANE_COUNT)
+
+table(person_crashes_roadway_innerjoin$SPEED_LIMIT)
+```
+
+We now have a dataframe filled with categorical variables and a response variable of seatbelt_yn. We'll copy this into a new dataframe called crashes_persons_roadway. We'll also set the response variable to be more interpretable, making 0 represent seatbelt = NO and 1 represent seatbelt = Yes. 
+```{r}
+df <- person_crashes_roadway_innerjoin
+
+require(plyr)
+#can also do this with index numbers, but this is more readable
+keep <- df[,c("CRN", "CRASH_YEAR", "SEX", "AGE", "TRANSPORTED", "Involvement", "AgeGroup",
+              "seatbelt", "HOUR_OF_DAY" , "DAY_OF_WEEK" , "CRASH_MONTH" , "WEATHER" , "ROAD_CONDITION", "LATITUDE", "LONGITUDE" , "LANE_COUNT" , "SPEED_LIMIT")]
+
+keep$seatbelt_yn <- revalue(keep$seatbelt, c("No"=0, "Yes"=1))
+
+crashes_persons_roadway <- keep[,c("SEX", "AGE", "Involvement", "AgeGroup",
+              "seatbelt_yn", "HOUR_OF_DAY" , "CRASH_MONTH" , "WEATHER" , "LANE_COUNT" , "SPEED_LIMIT")]
+
+#fix seatbelt_yn factor ordering
+crashes_persons_roadway$seatbelt_yn <- factor(crashes_persons_roadway$seatbelt_yn, labels = c(0, 1))
+str(crashes_persons_roadway)
+```
+
+After these cleaning steps we have a dataframe with 43,463 observations and 10 variables.  In order to build several different models and compare the performance of these models we now need to create some new variables that are grouping of our variables. 
+
+For example, HOUR_OF_DAY will be turned into a Night_DAY factor variable, but also left as 24 hours. This will let us test two models. The first will let us see whether Night versus Day is significant for predicting seatbelt use. The 24 level hour of day will allow us to identify the specific Hours of Day that contribute to this effect. We'll create two different time ranges for night vs. day.
+
+After we create these two new groups, we'll run a Chisq test to make sure that these groupings show significant differences in seatbelt use. 
+```{r}
+#Mapping values for night as 9PM & 12AM and running ChiSq on two groups
+crashes_persons_roadway$night <- mapvalues(crashes_persons_roadway$HOUR_OF_DAY, 
+                                           from = c("0", "1", "2", "3", "4", "5", "6",
+                                                    "7", "8", "9", "10", "11", "12",
+                                                    "13", "14", "15", "16", "17", "18",
+                                                    "19", "20", "21", "22", "23"),
+                                           to = c("Late Night", "Late Night", 
+                                                  "Not Late Night", "Not Late Night", 
+                                                  "Not Late Night", "Not Late Night",
+                                                  "Not Late Night", "Not Late Night",
+                                                  "Not Late Night", "Not Late Night",
+                                                  "Not Late Night", "Not Late Night",
+                                                  "Not Late Night", "Not Late Night",
+                                                  "Not Late Night", "Not Late Night",
+                                                  "Not Late Night", "Not Late Night",
+                                                  "Not Late Night", "Not Late Night",
+                                                  "Not Late Night", "Late Night",
+                                                  "Late Night", "Late Night"))
+night_chi = table(crashes_persons_roadway$night, crashes_persons_roadway$seatbelt_yn)
+night_chi
+chisq.test(night_chi)
+
+#Mapping second set of values for variable that is a 'longer_night' as 9PM - 4AM;
+crashes_persons_roadway$longer_night <- mapvalues(crashes_persons_roadway$HOUR_OF_DAY, 
+                                           from = c("0", "1", "2", "3", "4", "5", "6",
+                                                    "7", "8", "9", "10", "11", "12",
+                                                    "13", "14", "15", "16", "17", "18",
+                                                    "19", "20", "21", "22", "23"),
+                                           to = c("Night", "Night", 
+                                                  "Night", "Night", 
+                                                  "Night", "Day",
+                                                  "Day", "Day",
+                                                  "Day", "Day",
+                                                  "Day", "Day",
+                                                  "Day", "Day",
+                                                  "Day", "Day",
+                                                  "Day", "Day",
+                                                  "Day", "Day",
+                                                  "Day", "Night",
+                                                  "Night", "Night"
+                                                  ))
+longer_night_chi <- table(crashes_persons_roadway$longer_night, 
+                          crashes_persons_roadway$seatbelt_yn)
+longer_night_chi
+chisq.test(longer_night_chi)
+```
+Running a Chisq test on these two groups tells us that they have a significant differences in terms of expected versus observed frequencies for Seatbelt use. The longer_night variable shows greater significance, so we will primarily use this variable for model building. 
+
+Next, we'll create a two level factor variable for Weather and run a ChiSq
+```{r}
+crashes_persons_roadway$precip <- mapvalues(crashes_persons_roadway$WEATHER, 
+                                            from = c("Clear", "Rain", 
+                                                     "Fog", "Snow"),
+                                            to = c( "No Precip", "Precip",
+                                                   "No Precip", "Precip"))
+weather_chi = table(crashes_persons_roadway$precip, crashes_persons_roadway$seatbelt_yn)
+weather_chi
+chisq.test(weather_chi)
+```
+Running a Chisq test on these two weather groups tells us that they have a significant differences in terms of expected versus observed frequencies for Seatbelt use. 
+
+Next, create two levels for Speed Limit: Low Speed or High Speed and Run Chi Square
+```{r}
+#Roads > 35 MPH = High Speed
+crashes_persons_roadway$Speed_Category <-  cut(crashes_persons_roadway$SPEED_LIMIT, c(0,35,65), labels = c("Low Speed", "High Speed"))
+
+speed_category_chi <- table(crashes_persons_roadway$Speed_Category, 
+                            crashes_persons_roadway$seatbelt_yn)
+chisq.test(speed_category_chi)
+```
+
+Again, we see that these two groups have significant differences. Finally, we'll create new a new two level variable for Lane Counts: Big Road or Small Road and run a ChiSquare test. 
+```{r}
+#Roads with Lane Cournt >2 = Big Road
+crashes_persons_roadway$Road_Size <- cut(crashes_persons_roadway$LANE_COUNT, c(0,2,6), labels = c("Small Road", "Big Road"))
+crashes_persons_roadway$LANE_COUNT <- factor(person_crashes_roadway_innerjoin$LANE_COUNT)
+
+road_size_chi <- table(crashes_persons_roadway$Road_Size, 
+                       crashes_persons_roadway$seatbelt_yn)
+chisq.test(road_size_chi)
+```
+
+The Chi-square again returns a significant result. Across all of our new variables, we can reject the null hypothesis that the distribution of seatbelt use is independent of these factors. 
+
+### 7. Logistic Regression Model Building Using GLM and GLMMULTI.
+
+To this point we have completed an EDA of the newly added variables and reduced the dimensionality of our primary dataframe - 'crashes_persons_roadway" - by re-coding four variables in our data to be two level factor variables. Overall, this should help make our model more interpretable and reduce the noise in it. We are now going to set some final variables to factors, and copy this into a three separate dataframes that we will pass to our various modeling functions and compare the performance. 
+
+```{r}
+#Copy Dataframe and Set Variables to Factors
+crashes_persons_roadway_copy <- crashes_persons_roadway
+
+crashes_persons_roadway_copy$Involvement <- as.factor(crashes_persons_roadway_copy$Involvement)
+
+crashes_persons_roadway_copy$SPEED_LIMIT <- as.factor(crashes_persons_roadway_copy$SPEED_LIMIT)
+
+
+#Create four new dataframes from variables in the 'crashes_persons_roadway_copy' datafrane
+df_Grouped_night <- crashes_persons_roadway_copy[,c("SEX", "AgeGroup", "Involvement",
+              "night", "precip" , "Road_Size", "Speed_Category", "seatbelt_yn")]
+
+df_Grouped_longNight <- crashes_persons_roadway_copy[,c("SEX", "AgeGroup", "Involvement",
+              "longer_night", "precip" , "Road_Size", "Speed_Category", "seatbelt_yn")]
+
+df_Ungrouped_AgeGroup <-crashes_persons_roadway_copy[,c("SEX", "AgeGroup", "Involvement",
+              "HOUR_OF_DAY" , "WEATHER" , "LANE_COUNT", "SPEED_LIMIT", "seatbelt_yn")]
+
+```
+
+### Model 1: GLM Logit Regression 
+
+For our first model, we'll use forward selection with the crashes_persons_roadway_copy dataframe. We'll select from the newly created categorical variables that we identified as affecting seatbelt use through Chi-square testing. 
+
+```{r, echo = TRUE}
+#Create training and test data sets
+install.packages("InformationValue") #Used for calculating sensitvity, specifcity, and ROC Curves with AUROC
+library(InformationValue)
+
+
+#60% of dataset for training sets
+smp_size <- floor(0.6 * nrow(crashes_persons_roadway_copy))
+
+#set seed to make partition reproductible
+set.seed(122)
+train_ind <- sample(seq_len(nrow(crashes_persons_roadway_copy)), size = smp_size)
+
+train_new <- crashes_persons_roadway_copy[train_ind, ]
+test_new <- crashes_persons_roadway_copy[-train_ind, ]
+
+#Train the logit_reduced model
+logit_reduced <- glm(seatbelt_yn~SEX+AgeGroup+Involvement+longer_night+Road_Size+
+                     Speed_Category+precip, family = binomial(link="logit"), data = train_new)
+summary(logit_reduced)
+exp(cbind(OR = coef(logit_reduced), confint(logit_reduced))) #Print Odds Ratio and ConfInt 
+```
+
+The summary of the logit_reduced model shows us that all of our variables and level are significant except for Age Group: Early Middle Age. After we transform the coefficient variables we can more easily interpret how each coefficient affects the likelihood for wearing a  seatbelt. Being a passenger or a Male makes someone in this dataset less likely to wear a seatbelt. Increasing age, daytime hours, large roads, or high speed limits make someone more likely to be wearing a seatbelt. Being on a "high" speed limit road - defined as above 35 mph - makes the odds of someone wearing a seatbelt 4.4 times higher! Wow.
+
+Let's get our accuracy, ROC curve, and then review the confusion matrix.
+```{r}
+new_predictions <- predict(object = logit_reduced, newdata =  test_new,
+                           type="response")
+new_binary_predictions <- ifelse(new_predictions > 0.5,1,0) #use same .7 thresh 
+new_misses <- mean(new_binary_predictions != test_new$seatbelt_yn)
+new_hits <- 1 - new_misses
+print("Reduced Model Hit Rate:")
+new_hits 
+require(ROCR)
+require(InformationValue)
+ROCRpred <- prediction(new_predictions, test_new$seatbelt_yn)
+ROCRperf <- performance(ROCRpred, 'tpr','fpr')
+plot(ROCRperf, colorize = TRUE, text.adj = c(-0.2,1.7))
+
+#ROC PLOT WITH AREA UNDER CURVE
+plotROC(test_new$seatbelt_yn, new_predictions)
+
+#CONFUSION MATRIX
+table(test_new$seatbelt_yn)
+confusionMatrix(test_new$seatbelt_yn, new_predictions)
+
+cat("Sensitivity: ", sensitivity(test_new$seatbelt_yn, new_predictions, threshold = 0.5), "\n") #Sensitivity (or True Positive Rate) is the percentage of 1s (actuals) correctly predicted by the model, 
+
+cat("Specificity: ", specificity(test_new$seatbelt_yn, new_predictions, threshold = 0.5)) #specificity is the percentage of 0s (actuals) correctly predicted. 
+
+```
+From looking at the Hit Rate and area under the curve, this model is performing decently well. However, we know a hit rate of 80% is approximately equal to the distribution of seatbelt use versus non-seatbelt use observations. Let's look at our sensitivity and specificity scores to get a better idea of where and how i.e., the types of errors our classification model is making.
+
+Sensitivity =  0.9964298 
+Specificity = 0.01123928
+
+Looking at sensitivity, we can see that our model is doing a good job of predicting those who will wear their seatbelts. However, it is doing a terrible job of predicting who will not shown as by 'Specificity' of 0.01. The sensitivity tell us the number true positives that are model is accurately predicting. The specificity tells us the number of true negatives/non-events that our model is accurately predicting. In this case a non-event is not wearing a seatbelt. These ratios are shown below: 
+             
+                                 Sensitivity=# Actual 1s and Predicted as 1s
+                                                --------------------------------      
+                                                      # of Actual 1s
+                                 
+                                  Specificity= # Actual 0s and Predicted as 0s 
+                                                  ----------------------------
+                                                      # of Actual 0s
+
+Let's explore some other models to see if we can improve specificity. 
+
+### Model 2: Main Terms Effect Logistic Regression Using GLMULTI
+We'll next use the glmulti package to train a model using ourr df_Grourped_longnight dataframve. Glmulti provides automated model selection and model-averaging as a wrapper function for glm that automatically generates all possible models under constraints set by the user such as Information Criterion (AIC, AICc or BIC) for performance evaluation. 
+```{r}
+#Here is the information for the Glmulti package: https://cran.r-project.org/web/packages/glmulti/glmulti.pdf Under the Section "glmulti Automated model selection and multimodel inference with (G)LMs"
+
+install.packages("glmulti")
+library(glmulti)
+
+#60% of dataset for training sets
+smp_size_mainT <- floor(0.6 * nrow(df_Grouped_longNight))
+
+#set seed to make partition reproductible
+set.seed(6)
+train_ind_mainT <- sample(seq_len(nrow(df_Grouped_longNight)), size = smp_size_mainT)
+
+train_mainT <- df_Grouped_longNight[train_ind_mainT, ]
+test_mainT <- df_Grouped_longNight[-train_ind_mainT, ]
+
+
+glmmulti.logistic.out <- glmulti(seatbelt_yn~., data = train_mainT, 
+                                 level = 1, # No interaction considered
+                                 method = "h", #Exhaustive Approach
+                                 crit = "aic", #AIC Criteria
+                                 confsetsize = 5, # Keep 5 Best Model
+                                 plotty = F, report = F, 
+                                 fitfunction = 'glm', #GLM function
+                                 family = binomial)
+
+summary(glmmulti.logistic.out@objects[[1]])
+```
+
+As before, all of our variables comve back significant except for Age Group Early Middle Age. We'll save Model 2 as a model object, print the Odds Ratios and Coefficient Confidence intervals followed by looking at the Hit Rate, ROC, and Sensitivity/ Specificity. 
+```{r}
+#Save the best model as an object, and set up a transformed Odds Ratio and Coeff table 
+bestMulti.glm.fit <- glmmulti.logistic.out@objects[[1]]
+
+#Odds ratio and confict intervals for transformed coefficients
+cat("Odds Ratios and Coefficient Confidence Intervals: ", "\n") 
+exp(cbind(OR = coef(bestMulti.glm.fit), confint(bestMulti.glm.fit))) #See Odss Ratio and Confidence Intervals for Coefficients
+
+#Predictions
+pred_mainT <- predict(object = bestMulti.glm.fit, newdata =  test_mainT,
+                           type="response")
+new_binary_predictionsMainT <- ifelse(pred_mainT > 0.5,1,0) #use same .7 thresh 
+new_missesMainT <- mean(new_binary_predictionsMainT != test_mainT$seatbelt_yn)
+new_hits_mainT <- 1 - new_missesMainT
+cat("Reduced Model Hit Rate: ", new_hits_mainT, "\n")
+
+#Print ROC Curves
+require(ROCR)
+ROCRpred_mainT <- prediction(pred_mainT, test_mainT$seatbelt_yn)
+ROCRperf_mainT <- performance(ROCRpred_mainT, 'tpr','fpr')
+plot(ROCRperf_mainT, colorize = TRUE, text.adj = c(-0.2,1.7))
+plotROC(test_mainT$seatbelt_yn, pred_mainT)
+
+#Print Specificity and Sensitivity
+cat("Sensitivity: ", sensitivity(test_mainT$seatbelt_yn, pred_mainT, threshold = 0.5), "\n")
+cat("Specificity: ", specificity(test_mainT$seatbelt_yn, pred_mainT, threshold = 0.5))
+
+```
+This model returns very similar results and shows no appreciable improvement. The area under the ROC curve is 0.71647, slightly worse than the previous model. The AIC value is also similar. More importantly, this model is just as poor at predicting drivers who do not wear seatbelts, but is good at predicting True Positives for seatbelt usage. 
+
+Let's run an ANOVA to see if this can help gives us some insight into the comparative performance of these models. 
+```{r}
+anova(logit_reduced, bestMulti.glm.fit, test = "Chisq")
+```
+
+Running ANOVA, we see that Model 1 performs slightly better in terms of variance explained. However, neither model can break a hit rate of more than 80%, which is roughly equivalent to the distribution of Seatbelt Use 'Yes' versus 'No'. Furthermore, we've had no success accurately predicting Drivers or Passengers who do not wear seatbelts despite creating variables that were confirmed by ChiSq tests to be extremely significant. 
+
+### Model 4: GLM with Unbiased Resampled Data Using Information Value Package and df_Grouped_longNight Dataframe
+The next thing we can do to try fit a model to is address the bias in our data.  We can resample our training data to draw "Yes" and "No" in equal proportions. We'll go ahead and do this, but first we'll convert some of our categorical variables to continuous variables represented as Weight of Evidence (WOE) equivalents. WOEs are commonly used for assessing credit risk and provides a method of re-coding categorical variables to continuous variables. The formula for WOE is as follows:
+
+            WOE = ln(percent good of all goods/ percent bad of all bads)
+            
+In this formula, goods is synonymous with ones or Yes events and bads is synonymous with zeros, non-events, negatives or non-responders. Overall, the WOE is calculated using a basic odds ratio. 
+
+Let's start by re-coding the categorical variables in our df_Grouped_longNight dataframe to continuous WOE variables. To do this we'll use the InformationValue package.
+```{r}
+#Copy our data frame
+df_Grouped_longNight_copy <- df_Grouped_longNight
+
+#Select categorical variables for recoding to continuous
+factor_vars <- c ("SEX", "Involvement", "longer_night", "precip", "Road_Size", "Speed_Category", "AgeGroup")
+
+#install.packages("InformationValue")
+library(InformationValue)
+
+#Conditional for loop to translate factor vaiables
+for(factor_var in factor_vars){
+  df_Grouped_longNight_copy[[factor_var]] <- WOE(X=df_Grouped_longNight_copy[, factor_var], Y=df_Grouped_longNight_copy$seatbelt_yn)
+}
+
+head(df_Grouped_longNight_copy)
+```
+
+Alright, we have our categorical variables translated to continuous variables using the InformationValue package's WOE function. 
+
+Next, let's resample our training dataset and test dataset. In this case, the training data will have an equal sample of 0s and 1s, but the test data set will have a distribution of 0s and 1s similar to the raw data. Additionally our training data will be smaller than our test data, but the training data will still have over 10k observations. 
+```{r}
+#Store two new dataframes one that contains all the Yes observations and One all of the No oobservations
+seatbelt_y <- df_Grouped_longNight_copy[which(df_Grouped_longNight_copy$seatbelt_yn == 1), ]  # all 1's
+seatbelt_n <- df_Grouped_longNight_copy[which(df_Grouped_longNight_copy$seatbelt_yn == 0), ]  # all 0's
+
+set.seed(40)  # for repeatability of samples
+
+seatbelt_y_training_rows <- sample(1:nrow(seatbelt_y), 0.7*nrow(seatbelt_n))  # ***Pick as many 0's as 1's
+seatbelt_n_training_rows <- sample(1:nrow(seatbelt_n), 0.7*nrow(seatbelt_n))  
+# 1's for training
+training_y <- seatbelt_y[seatbelt_y_training_rows, ]  
+training_n <- seatbelt_n[seatbelt_n_training_rows, ]
+trainingData <- rbind(training_y, training_n)  # row bind the 1's and 0's 
+
+# Create Test Data
+testData_size <- sample(1:nrow(df_Grouped_longNight_copy), size = 25000 ) #Select 25,000 observations for testing
+testData <- df_Grouped_longNight_copy[testData_size, ]
+
+#Confirm the distributions of seatbelt Use in trainingData and testData
+table(trainingData$seatbelt_yn)
+table(testData$seatbelt_yn)
+```
+Alright, we see that the distribution of 0s and 1s in our trainingData is as we want it after resampling. 
+
+Let's now train Model 3 using GLM with our new unbiased training data. Afterwards, we'll look at model summary, variable inflation factors for collinearity, and Odds Ratios. 
+```{r}
+#Train model
+logitMod <- glm(seatbelt_yn ~., data=trainingData, family=binomial(link="logit"), weights = )
+summary(logitMod) #Summarize the model
+
+#Print Odds Ratio
+exp(cbind(OR = coef(logitMod), confint(logitMod)))
+
+require(car)
+vif(logitMod) #check collinearity, all variables have a VIF well below 4
+```
+
+Looking at the Odds Ratio, this models seems to place more weight on Sex, Night Versus Day and Weather. Interestingly, the model does not return a significant p-value for Road_Size and the Odds Ratio is close to 1 with a value of 1.06. We see that none of the variables have VIF approaching four, so we can feel confident that there is little collinearity. 
+
+Let's look at the hit rate. To do this, we'll use a function in the Information Value package called misClassError. The Hit Rate is simply 1 - misClassError. 
+
+We'll then plot the ROC curve, which includes an Area Under the Curve (AUC) for the ROC. Finally, we'll again assess the Sensitivity and Specificity to see if the model is performing better with regards to predicting non-seatbelt users.
+
+```{r}
+#Create a prediction object
+predicted <- plogis(predict(logitMod, testData))  # to convert it into prediction probability scores that is bound between 0 and 1, we use the plogis().
+
+#Misclassification Error/Hit Rate
+cat("Hit Rate= ", 1- misClassError(testData$seatbelt_yn, predicted, threshold = 0.5), "\n")
+
+#Print ROC
+plotROC(testData$seatbelt_yn, predicted)
+
+#Print Sensitivity and Specificity and Confusion Matrix
+cat("Sensitivity: ", sensitivity(testData$seatbelt_yn, predicted, threshold = 0.5), "\n")
+cat("Specifity: " , specificity(testData$seatbelt_yn, predicted,  threshold = 0.5))
+confusionMatrix(testData$seatbelt_yn, predicted)
+#GUYS NOTE HERE THAT IF YOU MAKE THE THRESHOLD HIGHER, OUR SPECIFICITY GETS BETTER AT THE COST OF SENSITIVITY. I also experimented to see what would happen if your changed the distrbrution of 0s and 1s slightly to say 60-40 or if your changed the size of the ttest data. It does seem that an even split of 0s and 1s and a test data size of 25,000 is optial. 
+```
+
+The results here are more encouraging. Although our hit rate is worse at 62.7%, we are doing many times better with the Specificity of our model which is 0.764 i.e., predicting who did not wear seatbelts. However, this improvement in specificity is coming at the cost of Sensitivity (True Positives) i.e. those who are wearing seatbelts. 
+
+Overall, these results are confirming that sample bias was confounding our model. Now that we know this was an issue, let's test a few more models using this approach. 
+
+### Model 4: GLM with Unbiased Resampled Data Using Information Value Package and df_Ungrouped_Age Dataframe
+The next model we'll test is using the df_Ungrouped_Age dataframe. We'll see if leaving our categorical variables ungrouped improves the model. As before, we'll start by re-coding the categorical variables to WOE continuous variables and then resampling our training and test data.
+```{r}
+set.seed(105)  # for repeatability of sample
+
+#df_Ungrouped_AgeGroup <-crashes_persons_roadway_copy[,c("SEX", "AgeGroup", "Involvement",
+             # "HOUR_OF_DAY" , "WEATHER" , "LANE_COUNT", "SPEED_LIMIT", "seatbelt_yn")]
+
+#Copy our data frame
+df_Ungrouped_AgeGroup_copy <- df_Ungrouped_AgeGroup
+
+#Select categorical variables for recoding to continuous
+factor_vars_dfAge <- c ("SEX", "Involvement", "AgeGroup", "HOUR_OF_DAY", "LANE_COUNT", "SPEED_LIMIT", "WEATHER")
+
+#Conditional for loop to translate factor vaiables
+for(factor_var in factor_vars_dfAge){
+  df_Ungrouped_AgeGroup_copy[[factor_var]] <- WOE(X=df_Ungrouped_AgeGroup_copy[, factor_var], Y=df_Ungrouped_AgeGroup_copy$seatbelt_yn)
+}
+
+head(df_Ungrouped_AgeGroup_copy)
+
+# Create Training Data
+seatbelt_y_df_age <- df_Ungrouped_AgeGroup_copy[which(df_Ungrouped_AgeGroup_copy$seatbelt_yn == 1), ]  # all 1's
+seatbelt_n_df_age <- df_Ungrouped_AgeGroup_copy[which(df_Ungrouped_AgeGroup_copy$seatbelt_yn == 0), ]  # all 0's
+
+seatbelt_y_dfAge_training_rows <- sample(1:nrow(seatbelt_y_df_age), 0.7*nrow(seatbelt_n_df_age)) # ***Pick as many 1's as 0's
+seatbelt_n_dfAge_training_rows <- sample(1:nrow(seatbelt_n_df_age), 0.7*nrow(seatbelt_n_df_age)) 
+
+training_y_df_age <- seatbelt_y_df_age[seatbelt_y_dfAge_training_rows, ]  
+training_n_df_age <- seatbelt_n_df_age[seatbelt_n_dfAge_training_rows, ]
+
+trainingData_dfAge <- rbind(training_y_df_age, training_n_df_age)  # row bind the 1's and 0's 
+
+# Create Test Data
+testData_size_dfAge <- sample(1:nrow(df_Ungrouped_AgeGroup), size = 25000 )
+
+testData_dfAge <- df_Ungrouped_AgeGroup_copy[testData_size_dfAge, ]
+
+table(trainingData_dfAge$seatbelt_yn)
+
+table(testData_dfAge$seatbelt_yn)
+
+```
+
+With the variables recoded and our training data resampled to account for bias, we can now test Model 4. As before, we'll print a summary of the model, Odds Ratios and Confidence Intervals, and then the VIFs. 
+```{r}
+logitMod_dfAge <- glm(seatbelt_yn ~., data=trainingData_dfAge, family=binomial(link="logit"))
+summary(logitMod_dfAge)
+
+#Print Odds Ratio
+exp(cbind(OR = coef(logitMod_dfAge) , confint(logitMod_dfAge)))
+
+#Print VIF
+vif(logitMod_dfAge)
+
+```
+The Odds Ratio shows that Model 4 is using Sex, Hour of the Day, and Weather very strongly. Speed Limit also affects Seatbelt Use. From only the Odds Ratios is does not appear that grouping or ungrouping the variables has considerable effect. 
+
+Next, we'll create prediction, plot ROC, and show Hit Rate using misclassification error, Specificity, and Sensitivity. 
+```{r}
+predicted_dfAge <- plogis(predict(logitMod_dfAge, testData_dfAge))  # to convert it into prediction probability scores that is bound between 0 and 1, we use the plogis().
+
+#Hit Rate
+cat("Hit Rate: ", 1 - misClassError(testData_dfAge$seatbelt_yn, predicted_dfAge, threshold = 0.5), "\n")
+
+#Plot ROC
+plotROC(testData_dfAge$seatbelt_yn, predicted_dfAge)
+
+#Print Sensitivity and Specificity and Confusion Matrix
+cat("Sensitivity: ", sensitivity(testData_dfAge$seatbelt_yn, predicted_dfAge, threshold = 0.5), "\n")
+cat("Specifity: " , specificity(testData_dfAge$seatbelt_yn, predicted_dfAge,  threshold = 0.5))
+confusionMatrix(testData_dfAge$seatbelt_yn, predicted_dfAge)
+
+#Note again increasing threshold will improve specificity at the cost of overall Hit Rate and sensitivity
+```
+Model 4 returns similar results to Model 3. 
+
+Hit Rate:  0.6369 
+Sensitivity:  0.607104 
+Specificity:  0.762641
+
+We can feel safe assuming that the model's performance is unaffected by how we have grouped our our variables. Overall, Model 4 performed slightly better, but the difference seems negligible, especially considering we are using different random samples to build our training data. 
+
+### Model 6: Pass Unbiased Training Data to Glmulti with df_Grouped_longnight
+Let's try one more model. For this, we'll use the df_Grouped_long night dataframe and resample the training data so we have an unbiased training sample. Then, we'll pass this training data to GLMULTI to take advantage of its exhaustive search functionality and model averaging abilities. 
+```{r}
+#Check that we are rusing the right training and test data
+head(trainingData)
+table(trainingData$seatbelt_yn)
+
+head(testData)
+```
+
+We'll now pass this data to glmulti. As before we'll then save then best model as a model object before printing a summary of the model, Odds Ratios, and VIFs to check for collinearity. 
+
+```{r}
+set.seed(55)
+glmmulti.unbiased <- glmulti(seatbelt_yn~., data = trainingData, 
+                                 level = 1, # No interaction considered
+                                 method = "h", #Exhaustive Approach
+                                 crit = "aic", #AIC Criteria
+                                 confsetsize = 5, # Keep 5 Best Model
+                                 plotty = F, report = F, 
+                                 fitfunction = 'glm', #GLM function
+                                 family = binomial)
+
+#Save the best model as an object
+glmmulti.unbiased <- glmmulti.unbiased@objects[[1]]
+
+#Print model summary
+summary(glmmulti.unbiased)
+
+#Odds ratio and confict intervals for transformed coefficients
+exp(cbind(OR = coef(glmmulti.unbiased), confint(glmmulti.unbiased))) #See Odss Ratio and Confidence Intervals for Coefficients
+
+vif(glmmulti.unbiased)
+
+```
+
+The glmulti package selected a model that includes Sex, AgeGroup, longer_night, precip, and Speed_Category. Interestingly, it did not include the Road_Size variable. Its possible that it excluded it and chose to include the Speed Category. Overall, the Odds Ratios show Sex, Night vs Day, and Weather as the having the largest effect on whether someone will wear a seatbelt. 
+
+As the final step, we'll print out the ROC, Specificity, Sensitivity, and Confusion Matrix. 
+```{r}
+predicted_glmUnbiased <- plogis(predict(glmmulti.unbiased, testData))  # to convert it into prediction probability scores that is bound between 0 and 1, we use the plogis().
+
+#Hit Rate
+cat("Hit Rate: ", 1 - misClassError(testData$seatbelt_yn, predicted_glmUnbiased, threshold = 0.5), "\n")
+
+#Plot ROC
+plotROC(testData$seatbelt_yn, predicted_glmUnbiased)
+
+#Print Sensitivity and Specificity and Confusion Matrix
+cat("Sensitivity: ", sensitivity(testData$seatbelt_yn, predicted_glmUnbiased, threshold = 0.5), "\n")
+cat("Specifity: " , specificity(testData$seatbelt_yn, predicted_glmUnbiased,  threshold = 0.5))
+confusionMatrix(testData$seatbelt_yn, predicted_glmUnbiased)
+
+#Note again increasing threshold will improve specificity at the cost of overall Hit Rate and sensitivity
+
+```
+The performance of Model 5 is similar to models 3 & 4. The performances are shown below. 
+
+Model 3                           Model 4                         Model 5
+Hit Rate=  0.6272                 Hit Rate:  0.6369               Hit Rate:  0.6239 
+Sensitivity:  0.5941921           Sensitivity:  0.607104          Sensitivity:  0.5894763 
+Specificity:  0.7639547           Specificity:  0.762641          Specificity:  0.7666323    
+AIC: 14461                        AIC: 14209                      AIC: 14460
+                            
+So far, we have tested 5 models. It appears that Model 4 - logitMod_dfAge - performs the best. Although it's hit rate is only ~64%, it predicts who will not wear a seatbelt (specificity) with greater than 75% accuracy . Given that this is the purpose of this analysis, we'll move forward with this model.              
+
+### 8. Cross Validation of Model 4 logitMod_dfAge
+
+As a next step, we'll do a cross validation to see this models performance across a number of iterations. For this cross validation, we'll actually do a variant of k-fold cross validation where we randomly break the dataset up into chunks of 85% and 15% and test the model over 250 iterations. In k-fold cross validation, the dataset is partitioned into k equally sized segments or folds to train the model. Within each iteration of the cross validation, one fold is held out as the test data while the k-1 other folds are used to train the model. 
+
+For our cross validation, we'll still take advantage of our unbiased training dataframe - trainingData_dfAge.  
+
+```{r}
+library(plyr)   # progress bar
+library(caret)  # confusion matrix
+
+# False positive rate
+fpr <- NULL
+
+# False negative rate
+fnr <- NULL
+
+# Number of iterations
+k <- 250
+
+# Initialize progress bar
+pbar <- create_progress_bar('text')
+pbar$init(k)
+
+acc <- NULL
+
+set.seed(222)
+
+for(i in 1:k)
+{   # Train-test splitting
+    # 85% of samples -> fitting
+    # 15% of samples -> testing
+    smp_size <- floor(0.85 * nrow(trainingData_dfAge)) #Sample from unbiased training data frame
+    index <- sample(seq_len(nrow(trainingData_dfAge)),size=smp_size)
+    train_cv <- trainingData_dfAge[index, ]
+
+#fitting the model
+model5_cv <- glm(seatbelt_yn~., family = binomial, data = train_cv)
+
+#predicting results 
+
+results_prob_cv <- predict(model5_cv, testData_dfAge, type = "response") #Predict against normally distributed data
+results_cv <- ifelse(results_prob_cv >0.5, 1,0)
+
+answers <- testData_dfAge$seatbelt_yn
+
+misClassificError <- mean(answers != results_cv)
+
+#Calculate hit rate
+acc[i] <- 1 -misClassificError
+
+    cm <- confusionMatrix(data=results_cv, reference=answers)
+    fpr[i] <- cm$table[2]/(nrow(trainingData_dfAge)-smp_size)
+    fnr[i] <- cm$table[3]/(nrow(trainingData_dfAge)-smp_size)
+    
+    pbar$step()
+}
+
+
+# Average accuracy of the model
+cat("/n", "Average Model Accuracy: ", mean(acc), "\n")
+
+par(mfcol=c(1,2))
+
+# Histogram of accuracy
+hist(acc,xlab='Accuracy',ylab='Freq',
+     col='cyan',border='blue',density=30, main = 'Hit Rate \n # of Iterations = 250')
+
+# Boxplot of accuracy
+boxplot(acc,col='cyan',border='blue',horizontal=T,xlab='Accuracy',
+        main='Cross Validated Hit Rate')
+
+# Confusion matrix and plots of fpr and fnr
+cat("Average Model False Positive Rate: ", mean(fpr), "\n")
+cat("Average Model False Negative Rate: ", mean(fnr))
+hist(fpr,xlab='% of FPR',ylab='Freq',main='False Positive Rate',
+     col='cyan',border='blue',density=30)
+hist(fnr,xlab='% of FNR',ylab='Freq',main='False Negative Rate',
+     col='cyan',border='blue',density=30)
+
+```
+
+Testing our model over 250 iterations, we see that it performs well. With a hit rate ranging from 0.632 - 0.642. 
+
+### 9.Paramter Tuning of Model 4 logitMod_dfAge
+
+The final thing we could do to try and improve our model's performance is to look at ways to improve the tuning parameters of the coefficients of our model.  All models depend on coefficients as well as on one or more tuning parameters.  Coefficients are estimated using training data, while the tuning parameters are chosen. Tuning parameters help to regulate the model complexity and the choice of the tuning parameter values is important because it is linked with the accuracy of the predictions returned by the model.
+
+The glmnet package fits the variable coefficients of a generalized linear model using a penalized maximum likelihood tuning parameter. For the tuning parameter lambda, the package computes the regularization path for the elastic-net penalty over a grid of values. A second tuning parameter called the mixing percentage is denoted by alpha. This parameter takes value in [0,1] and bridges the gap between the lasso and the ridge shrinkage/parameter tuning approaches.
+
+Source: http://www.milanor.net/blog/cross-validation-for-predictive-analytics-using-r/ 
+Source: https://web.stanford.edu/~hastie/glmnet/glmnet_alpha.html#log
+
+As a final step let's do that here just to see if we can improve our prediction accuracy performance. 
+```{r}
+#Create response and predictor variables
+seatbelts <- trainingData_dfAge[, "seatbelt_yn"]
+predictors <- trainingData_dfAge[, -match(c("seatbelt_yn"), colnames(trainingData_dfAge))]
+
+train_cv_set <- createDataPartition(seatbelts, p = 0.8, list = FALSE)
+str(train_cv_set)
+
+set.seed(225)
+
+#Create training and response variables
+train_predictors <- predictors[train_cv_set, ]
+train_classes <- seatbelts[train_cv_set]
+test_predictors <- predictors[-train_cv_set, ]
+test_classes <- seatbelts[-train_cv_set]
+ 
+#Set seed for reproduceability
+cv_splits <- createFolds(seatbelts, k = 5, returnTrain = TRUE)
+```
+
+Now that we have created training and response variables by partitioning the data, we'll pass these to the trainControl and train functions of glmnet and have it return us optimal values for our tuning parameters of alpha and lambda. 
+```{r}
+require(glmnet)
+require(caret)
+
+set.seed(225)
+
+cv_data_train <- trainingData_dfAge[train_cv_set, ]
+cv_data_test <- trainingData_dfAge[-train_cv_set, ]
+ 
+glmnet_grid <- expand.grid(alpha = c(0,  .1,  .2, .4, .6, .8, 1),
+                           lambda = seq(.01, .2, length = 20))
+#The train() function requires the model formula together with the indication of the model to fit and the grid of tuning parameter values to use.
+
+#Selection the number of iterations in the k-fold cross validation for parameter tuning
+glmnet_ctrl <- trainControl(method = "cv", number = 10)
+glmnet_fit <- train(seatbelt_yn ~ ., data = cv_data_train,
+                    method = "glmnet",
+                    tuneGrid = glmnet_grid, #select grid for plotting
+                    trControl = glmnet_ctrl) #specify method for selecting optimal parameters
+
+glmnet_fit$bestTune
+```
+
+We see that glmnet has selected tuning parameters of alpha = 0.2 and lambda = 0.01. We'll now plot the results of model with the selected tuning parameters. 
+
+```{r}
+trellis.par.set(caretTheme())
+plot(glmnet_fit, scales = list(x = list(log = 2)), ylim = c(0.66,0.69))
+```
+
+We can see that even with tuning our regularization parameters with glmnent, we aren't getting much of a boost in model accuracy. At this point, we can feel that we have done an exhaustive search and tuning of coefficients at this point. 
+
+Let's finally visualize some predicted probabilities using our logistic regression model. First, we'll look at the Odds Ratios for Model 4: 
+                   OR     2.5 %   97.5 %
+(Intercept) 0.9912012 0.9525943 1.031384
+SEX         4.1058692 3.1972367 5.275747
+AgeGroup    1.9146767 1.5656536 2.342260
+Involvement 2.9515299 2.3501866 3.708737
+HOUR_OF_DAY 3.6289618 2.9009551 4.543663
+WEATHER     3.3575356 2.1738420 5.191351
+LANE_COUNT  1.0807956 0.9821536 1.188837
+SPEED_LIMIT 2.7679192 2.5860943 2.964576
+
+To visualize predicted probabilities, we'll create two dataframe of male and female drivers by hour of day with AgeGroup set to Early Twenties, Weather = Clear,  Lane Count = 2, and speed limit and time of Day changing. We'll then pass this dataframe to the predict function, using Model 4 to provide predicted probabilities of seatbelt use.  
+```{r}
+#Create dataframe of male drivers by hour of day with AgeGroup set to Early Twenties, Weather = Clear,  Lane Count = 2, and speed limit and time of Day changing. 
+times <- unique(df_Ungrouped_AgeGroup_copy$HOUR_OF_DAY)
+
+newdata1Males <- with(df_Ungrouped_AgeGroup, data.frame(SEX = rep(-0.135602205366684, 400), #Male, Female, Female
+                                                   AgeGroup = rep(-0.096374879558376, 400) ,  #"Early Twenties" (#  -0.00269010462371031 = "Late Twenties/Early Thirties")
+                                                 Involvement = rep(0.136536567535011 , 400), #Driver
+                                                 HOUR_OF_DAY = rep(c(-0.0740957389622387, 0.163120634868719, -0.166749933730939, 
+                                                                     0.270574034635523, 0.0751090318563372, 0.131617563097761, 0.2278741654211,-0.120257601954702, -0.0437420308413535, -0.312765783194137), 40)
+                                     # (c(0.163120634868719, 0.270574034635523, 0.131617563097761, -0.135149089564895), 100)
+                                                  , #6 AM,10AM, 2:00 PM, 11:00 PM
+                                                   WEATHER = rep(-0.0361378659281332, 400), 
+                                                  LANE_COUNT =rep(-0.320806855081444, 400), #2 lanes, (0.59084686992613 - lanes 3)
+                                                  SPEED_LIMIT = rep(c(-0.686890577831362, -0.232642741921142, 0.433326886961097, 1.27261747740865), each = 100)#25, #35, #45, #55
+                                                   ))
+#Add a column of predicted probability using model 5
+newdata1Males$Sex <- rep("Male", 400)
+newdata1Males$predProb <- predict(logitMod_dfAge, newdata1Males, type = "response")
+newdata1Males$RoadSize <- rep("2 Lanes", 400) #"3 Lanes"), each =200
+newdata1Males$Speed <- rep(c("25 MPH", "35 MPH" ,"45MPH", "55 MPH") , each =100) 
+newdata1Males$TimeofDay <- rep(c( 4, 6, 8, 10, 12, 14, 18, 20, 22, 0),40)
+
+#Add predicted probabilities and create cofidence confidence intervals for predicted probabilities. 
+newdata2Males <- cbind(newdata1Males, predict(logitMod_dfAge, newdata = newdata1Males, type = "link",
+    se = TRUE))
+newdata2Males <- within(newdata2Males, {
+    PredictedProb <- plogis(fit)
+    LL <- plogis(fit - (1.96 * se.fit))
+    UL <- plogis(fit + (1.96 * se.fit))
+})
+
+newdata2Males
+
+```
+
+Here, we do the same and create dataframe of female drivers by hour of day with AgeGroup set to Early Twenties, Weather = Clear,  Lane Count = 2, and speed limit and time of Day changing. 
+
+```{r}
+
+newdata1Females <- with(df_Ungrouped_AgeGroup, data.frame(SEX = rep(0.193055877385024, 400), # Female
+                                                   AgeGroup = rep(-0.096374879558376, 400), #Early Twenties
+
+                                                 Involvement = rep(0.136536567535011 , 400), #Driver
+                                                 HOUR_OF_DAY = rep(c(-0.0740957389622387, 0.163120634868719, -0.166749933730939, 
+                                                                     0.270574034635523, 0.0751090318563372, 0.131617563097761, 0.2278741654211,-0.120257601954702, -0.0437420308413535, -0.312765783194137), 40)
+                                     # (c(0.163120634868719, 0.270574034635523, 0.131617563097761, -0.135149089564895), 100)
+                                                  , #6 AM,10AM, 2:00 PM, 11:00 PM
+                                                   WEATHER = rep(-0.0361378659281332, 400), 
+                                                  LANE_COUNT =rep(-0.320806855081444, 400), #2 lanes, (0.59084686992613 - lanes 3)
+                                                  SPEED_LIMIT = rep(c(-0.686890577831362, -0.232642741921142, 0.433326886961097, 1.27261747740865), each = 100)#25, #35, #45, #55
+                                                   ))
+#Add a column of predicted probability using model 5
+newdata1Females$Sex <- rep("Female", 400)
+newdata1Females$predProb <- predict(logitMod_dfAge, newdata1Females, type = "response")
+newdata1Females$RoadSize <- rep(c("2 Lanes"), 400) #"3 Lanes" 
+newdata1Females$Speed <- rep(c("25 MPH", "35 MPH" ,"45MPH", "55 MPH") , each =100) 
+newdata1Females$TimeofDay <- rep(c( 4, 6, 8, 10, 12, 14, 18, 20, 22, 0),40)
+
+#Now we are going to create standard errors and plot confidence intervals. 
+
+newdata2females <- cbind(newdata1Females, predict(logitMod_dfAge, newdata = newdata1Females, type = "link",
+    se = TRUE))
+newdata2females <- within(newdata2females, {
+    PredictedProb <- plogis(fit)
+    LL <- plogis(fit - (1.96 * se.fit))
+    UL <- plogis(fit + (1.96 * se.fit))
+})
+
+newdata2females
+```
+
+We'll finish by combining these two tables of predicted probabilities and then plotting them with bans around the probability line that represent the confidence intervals for the predicted probability. 
+
+```{r}
+#Combine the two data frames
+totalDf <- rbind(newdata2females, newdata2Males)
+require(ggplot2)
+#Plot the total dataframe
+predicted_plot <- ggplot(totalDf, aes(x=TimeofDay,  y=predProb)) + geom_ribbon(aes(ymin = LL, ymax = UL, fill = Speed), alpha = 0.2)+geom_line(aes(colour = Speed), size = 1)+facet_grid(~Sex)+ylab("Predicted Probability")
+
+predicted_plot
+
+#Save Plot
+ggsave(
+  "ggPredicted.png",
+  predicted_plot,
+  width = 5.8,
+  height = 3.5,
+  dpi = 300)
+```
+
+In the above visual we can see how the predicted probability of seatbelt use for male or female drivers changes based upon time, road speed, and driver type with weather (Clear), lane count (2), and AgeGroup (early Twenties) held constant. We can see that for the same time of day and speed of the road, a female is more likely to be wearing a seatbelt. However, we can see the issues that arise with the poor sensitivity of our model. The predicted probabilities are clearly underestimating the Seatbelt Use of Yes. We can confirm this both either by performing several basic calculations on our dataframe or by comparing to findings from other literature. 
+
+### Conclusions
+In this study, we initially trained and tested a model with seven predictor variables. This model had an accuracy of 80 percent, however, upon further inspection we found that it did a poor job of predicting seatbelt non-users. We suspected that this might have been a result of the bias in our sample. To account for this we resampled training data to have as many observations of non-seatbelt use as seatbelt use. Furthermore, we translated our categorical variables into continuous numeric variables using Weight of Evidence (WOE) values. 
+
+As a result, our model's ability to accurately predict seatbelt non-use greatly improved from ~1%  to > 75%  with an Area Under the Receiver Operator Curve (AUROC) of approximately 0.74. However, this improvement came at the cost of overall accuracy, which decreased to ~64%. The Odds Ratios of this model points to an occupant's Sex, (4.1058692), the Hour of Day (3.6289618), Weather (3.3575356), and Speed Limit (2.7679192) as the most significant factors affecting seatbelt use. The model's performance was then confirmed using a variant of k-fold cross-validation (CV). This CV was ran 250 times and provided a range of accuracy scores from 63.2 - 64.2%. Finally, as a last step to see if we could improve the performance, we calculated regularization parameters using the glmnet package. This did not significantly boost model performance. 
+
+As currently constructed, our best model - Model 4 - allows us to output predicted probabilities of seatbelt use while holding constant or changing variables of Sex, Age Group, Involvement, Hour of the Day, Weather, Lane Count, and Speed Limit. It is important to note that the application of this model for states other than Pennsylvania is limited as primary seatbelt enforcement laws differ by state. The performance of this model might be improved by additional predictor variables. For example, several studies have identified a relationship between vehicle type and seatbelt use, specifically that seatbelt use in pickup trucks is lower than other passenger vehicles. Additionally, we did not explore the potential of weighting our response variable of Seatbelt Use = No.  
+
+In this analysis, we trained and tested 5 models using seven predictor variables. Our best model as assessed with AIC, Accuracy, AUROC, Sensitivity, and Specificity performs fairly well at predicting occupants involved crashes who were not wearing seatbelt use. Given the significance of seatbelt use as a safety measure that reduces injury severity and mortality further development of similar predictive models is merited in order to support educational and public safety campaigns. 
